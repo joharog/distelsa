@@ -28,7 +28,39 @@ FORM get_data.
         lv_total8    TYPE mver-gsv08,
         lv_total52   TYPE mver-gsv13.        " Variable to store the running total (use a suitable type)
 
+
+  DATA: lr_lfart   TYPE RANGE OF likp-lfart,
+        lv_plan_nc TYPE lips-lfimg.
+
+  APPEND VALUE #( sign   = 'E'
+                  option = 'EQ'
+                  low    = 'ZCRO' ) TO lr_lfart.
+  APPEND VALUE #( sign   = 'E'
+                  option = 'EQ'
+                  low    = 'ZTRA' ) TO lr_lfart.
+  APPEND VALUE #( sign   = 'E'
+                  option = 'EQ'
+                  low    = 'ZTRB' ) TO lr_lfart.
+  APPEND VALUE #( sign   = 'E'
+                  option = 'EQ'
+                   low   = 'EL' ) TO lr_lfart.
+  APPEND VALUE #( sign   = 'E'
+                  option = 'EQ'
+                  low    = 'EF' ) TO lr_lfart.
+
   FIELD-SYMBOLS: <lfs_gsv> TYPE any.     " Field symbol to dynamically assign fields
+
+  DATA: lv_year_act   TYPE n LENGTH 4,
+        lv_year_ant   TYPE n LENGTH 4,
+        lv_week_act   TYPE i,
+        lv_campo_num  TYPE n LENGTH 2,
+        lv_field_name TYPE string,
+        lt_mver       TYPE TABLE OF mver,
+        ls_mver       TYPE mver.
+
+  FIELD-SYMBOLS: <fs_valor> TYPE any.
+
+
 
   BREAK mqa_abap3.
   IF s_matnr IS NOT INITIAL.
@@ -68,11 +100,18 @@ FORM get_data.
           WHERE locnr IN @lr_locnr.
       ENDIF.
 
+      BREAK mqa_abap3.
       SELECT * FROM mard INTO TABLE @DATA(lt_mard)
         FOR ALL ENTRIES IN @lt_wrf3
         WHERE matnr IN @s_matnr
           AND werks EQ @lt_wrf3-loclb
           AND lgort EQ '1001'.  "Pasar el campo a STVARV (hacerlo configurable)
+
+      SELECT * FROM mard INTO TABLE @DATA(lt_mard_lus)  "LIBRE_UTIL_STORE
+        WHERE matnr IN @s_matnr
+          AND werks IN @s_werks
+          AND lgort EQ '1001'.
+
     ENDIF.
 
   ENDIF.
@@ -98,7 +137,10 @@ FORM get_data.
     READ TABLE lt_mara INTO DATA(ls_mara) WITH KEY matnr = ls_marc-matnr.
     IF sy-subrc EQ 0.
 
-      gs_data-marca = ls_mara-brand_id.
+      SELECT SINGLE brand_descr FROM wrf_brands_t INTO gs_data-marca
+        WHERE brand_id EQ ls_mara-brand_id AND language EQ 'S'.
+
+*      gs_data-marca = ls_mara-brand_id.
       gs_data-grupo_articulo = ls_mara-matkl.
 
       SELECT SINGLE vtext FROM t179t INTO gs_data-departamento
@@ -110,7 +152,8 @@ FORM get_data.
       SELECT SINGLE vtext FROM t179t INTO gs_data-familia
         WHERE prodh EQ ls_mara-matkl(7).
 
-      gs_data-subfamilia = 'NO APLICA'.
+      SELECT SINGLE wgbez FROM t023t INTO gs_data-subfamilia
+        WHERE matkl EQ ls_mara-matkl AND spras EQ 'S'.
 
       READ TABLE lt_makt INTO DATA(ls_makt) WITH KEY matnr = ls_mara-matnr.
       IF sy-subrc EQ 0.
@@ -123,101 +166,195 @@ FORM get_data.
     IF sy-subrc EQ 0.
       IF ls_wrf3-prioritaet EQ '01'.
 
-        READ TABLE lt_mard INTO DATA(ls_mard) WITH KEY werks = ls_wrf3-loclb
-                                                       matnr = ls_marc-matnr.
+        READ TABLE lt_mard INTO DATA(ls_mard) WITH KEY werks = ls_wrf3-loclb matnr = ls_marc-matnr.
         IF sy-subrc EQ 0.
           gs_data-libre_util_cd    = ls_mard-labst.
-          gs_data-libre_util_store = ls_mard-labst.
         ENDIF.
+
       ENDIF.
+    ENDIF.
+
+    READ TABLE lt_mard_lus INTO DATA(ls_mard_lus) WITH KEY werks = gs_data-werks matnr = ls_marc-matnr.
+    IF sy-subrc EQ 0.
+      gs_data-libre_util_store = ls_mard_lus-labst.
     ENDIF.
 
     lv_material  = |{ ls_marc-matnr ALPHA = OUT }|.
     lv_material  = |{ lv_material ALPHA = IN }|.
     lv_plant = ls_wrf3-loclb.
 
-    REFRESH: lt_wmdvsx, lt_wmdvex.
-    CALL FUNCTION 'BAPI_MATERIAL_AVAILABILITY'
-      EXPORTING
-        plant      = lv_plant       "Centro de WRF3
-        material   = lv_material
-        unit       = 'UN'
-        check_rule = 'B'
-      IMPORTING
-        return     = ls_return
-      TABLES
-        wmdvsx     = lt_wmdvsx
-        wmdvex     = lt_wmdvex.
+*    REFRESH: lt_wmdvsx, lt_wmdvex.
+*    CALL FUNCTION 'BAPI_MATERIAL_AVAILABILITY'
+*      EXPORTING
+*        plant      = lv_plant       "Centro de WRF3
+*        material   = lv_material
+*        unit       = 'UN'
+*        check_rule = 'B'
+*      IMPORTING
+*        return     = ls_return
+*      TABLES
+*        wmdvsx     = lt_wmdvsx
+*        wmdvex     = lt_wmdvex.
 
-    READ TABLE lt_wmdvex INTO DATA(ls_wmdvex) INDEX 1.
-    IF sy-subrc EQ 0.
-      gs_data-ventas_cd = ls_wmdvex-com_qty.
-    ENDIF.
+*    READ TABLE lt_wmdvex INTO DATA(ls_wmdvex) INDEX 1.
+*    IF sy-subrc EQ 0.
+*      gs_data-ventas_cd = ls_wmdvex-com_qty.
+*    ENDIF.
 
     READ TABLE lt_wmdvsx INTO DATA(ls_wmdvsx) INDEX 1.
     IF sy-subrc EQ 0.
-      gs_data-stock_cd =  ls_wmdvsx-req_qty.
+*      gs_data-stock_cd =  ls_wmdvsx-req_qty.
     ENDIF.
 
-    REFRESH: lt_wmdvsx, lt_wmdvex.
-    CALL FUNCTION 'BAPI_MATERIAL_AVAILABILITY'
-      EXPORTING
-        plant      = ls_marc-werks  "Centro de Marc
-        material   = lv_material
-        unit       = 'UN'
-        check_rule = 'B'
-      IMPORTING
-        return     = ls_return
-      TABLES
-        wmdvsx     = lt_wmdvsx
-        wmdvex     = lt_wmdvex.
+*    REFRESH: lt_wmdvsx, lt_wmdvex.
+*    CALL FUNCTION 'BAPI_MATERIAL_AVAILABILITY'
+*      EXPORTING
+*        plant      = ls_marc-werks  "Centro de Marc
+*        material   = lv_material
+*        unit       = 'UN'
+*        check_rule = 'B'
+*      IMPORTING
+*        return     = ls_return
+*      TABLES
+*        wmdvsx     = lt_wmdvsx
+*        wmdvex     = lt_wmdvex.
 
-    READ TABLE lt_wmdvex INTO ls_wmdvex INDEX 1.
-    IF sy-subrc EQ 0.
-      gs_data-sale_store = ls_wmdvex-com_qty.
-    ENDIF.
+*    READ TABLE lt_wmdvex INTO DATA(ls_wmdvex) INDEX 1.
+*    IF sy-subrc EQ 0.
+*      gs_data-sale_store = ls_wmdvex-com_qty.
+*    ENDIF.
 
     READ TABLE lt_wmdvsx INTO ls_wmdvsx INDEX 1.
     IF sy-subrc EQ 0.
-      gs_data-stock_comp =  ls_wmdvsx-req_qty.
+*      gs_data-stock_comp =  ls_wmdvsx-req_qty.    "Se mueve a logica LIKP+LIPS
     ENDIF.
 
+
+* Stock comprometido | STOCK_COMP
+    SELECT * FROM likp INTO TABLE @DATA(lt_likp_sc)
+      WHERE vstel EQ @ls_wrf3-loclb
+        AND gbstk EQ 'A'.
+    IF sy-subrc EQ 0.
+      DELETE lt_likp_sc WHERE lfart EQ 'LF'.
+      DELETE lt_likp_sc WHERE lfart EQ 'EL'.
+
+      SELECT * FROM lips INTO TABLE @DATA(lt_lips_sc)
+        FOR ALL ENTRIES IN @lt_likp_sc
+        WHERE vbeln EQ @lt_likp_sc-vbeln
+         AND  matnr EQ @gs_data-articulo.
+      IF sy-subrc EQ 0.
+        LOOP AT lt_lips_sc INTO DATA(ls_likp_sc).
+          gs_data-stock_comp += ls_likp_sc-lfimg.
+        ENDLOOP.
+      ENDIF.
+    ENDIF.
+    REFRESH: lt_likp_sc, lt_lips_sc.
+
+*  Disponible para ventas | VENTAS_CD
+    gs_data-ventas_cd =  gs_data-libre_util_cd - gs_data-stock_comp.
+
+
+
+* Stock en curso | STOCK_CD
+    REFRESH: lt_items, lt_return.
     CALL FUNCTION 'BAPI_PO_GETITEMS'
       EXPORTING
         material = lv_material "ls_marc-matnr
         plant    = lv_plant    "ls_wrf3-locnr
       TABLES
-*       PO_HEADERS =
         po_items = lt_items
         return   = lt_return.
-
-    LOOP AT lt_items INTO DATA(ls_items).
-*      gs_data-stock_cd += ls_items-disp_quan. "Validar logica con funcional ( punto 7-G )
-
-*    gs_data-stock_store "Validar logica con funcional (punto 8)
-*    gs_data-stock_store
+    LOOP AT lt_items INTO DATA(ls_items) WHERE no_more_gr EQ '' AND item_cat EQ '0'.
+      gs_data-stock_cd += ls_items-disp_quan.
     ENDLOOP.
 
+* Stock en curso tienda | STOCK_STORE
+    REFRESH: lt_items, lt_return.
+    CALL FUNCTION 'BAPI_PO_GETITEMS'
+      EXPORTING
+        material = lv_material
+        plant    = gs_data-werks
+      TABLES
+        po_items = lt_items
+        return   = lt_return.
+    LOOP AT lt_items INTO ls_items WHERE no_more_gr EQ '' AND item_cat EQ '0'.
+      gs_data-stock_store += ls_items-disp_quan.
+    ENDLOOP.
+
+*  Comprometidos por facturar | BILL_COMP
+    SELECT * FROM likp INTO TABLE @DATA(lt_likp_bc)
+      WHERE vstel EQ @gs_data-werks
+        AND lfart IN @lr_lfart
+        AND gbstk EQ 'A'.
+    IF sy-subrc EQ 0.
+      SELECT * FROM lips INTO TABLE @DATA(lt_lips_bc)
+             FOR ALL ENTRIES IN @lt_likp_bc
+             WHERE vbeln EQ @lt_likp_bc-vbeln
+              AND  matnr EQ @gs_data-articulo.
+      IF sy-subrc EQ 0.
+        LOOP AT lt_lips_bc INTO DATA(ls_likp_bc).
+          gs_data-bill_comp += ls_likp_bc-lfimg.
+        ENDLOOP.
+      ENDIF.
+    ENDIF.
+    REFRESH: lt_likp_bc, lt_lips_bc.
 
 
+* Historial de Planificacion  PLAN_HISTORY
+    SELECT * FROM likp INTO TABLE @DATA(lt_likp_ph)
+      WHERE vstel EQ @ls_wrf3-loclb
+        AND kunnr EQ @gs_data-werks
+        AND lfart IN ('ZCRO', 'ZTRA')
+        AND gbstk EQ 'A'.
+    IF sy-subrc EQ 0.
+      SELECT * FROM lips INTO TABLE @DATA(lt_lips_ph)
+        FOR ALL ENTRIES IN @lt_likp_ph
+        WHERE vbeln EQ @lt_likp_ph-vbeln
+         AND  matnr EQ @gs_data-articulo.
+      IF sy-subrc EQ 0.
+        LOOP AT lt_lips_ph INTO DATA(ls_likp_ph).
+          gs_data-plan_history += ls_likp_ph-lfimg.
+        ENDLOOP.
+      ENDIF.
+    ENDIF.
+    REFRESH: lt_likp_ph, lt_lips_ph.
 
-*  Validar API con funcional
-*  bill_comp
-*  history_plan
+* Historial de Planificacion NO CONTABILIZADAS
+    SELECT * FROM likp INTO TABLE @DATA(lt_likp_nc)
+      WHERE vstel EQ @gs_data-werks
+        AND kunnr EQ @ls_wrf3-loclb
+        AND lfart IN ('ZCRO', 'ZTRA', 'ZTRB')
+        AND gbstk EQ 'A'.
+    IF sy-subrc EQ 0.
+      SELECT * FROM lips INTO TABLE @DATA(lt_lips_nc)
+        FOR ALL ENTRIES IN @lt_likp_nc
+        WHERE vbeln EQ @lt_likp_nc-vbeln
+         AND  matnr EQ @gs_data-articulo.
+      IF sy-subrc EQ 0.
+        LOOP AT lt_lips_nc INTO DATA(ls_likp_nc).
+          lv_plan_nc += ls_likp_nc-lfimg.
+        ENDLOOP.
+      ENDIF.
+    ENDIF.
+    REFRESH: lt_likp_nc, lt_lips_nc.
 
-* Pendiente recepción disponible para venta
-    gs_data-pending_sale_store = gs_data-plan_history - gs_data-store_transit.
-
-* Ingresos
-    gs_data-income = gs_data-bill_comp + gs_data-sale_store.
-
-* Engresos
-    gs_data-expenses = gs_data-bill_comp + gs_data-plan_history.
+* Pendiente recepción disponible para venta | PENDING_SALE_STORE
+    gs_data-pending_sale_store = gs_data-plan_history + gs_data-store_transit.
 
 
-* Periódo ultimo pronostico (semana anterior)
+* Engresos = Comprometidos por facturar + lv_plan_nc| EXPENSES
+    gs_data-expenses = gs_data-bill_comp + lv_plan_nc.
+
+
+* Disponible venta Tienda(DV Tienda) | SALE_STORE
+    gs_data-sale_store = gs_data-libre_util_store - gs_data-bill_comp.
+
+* Ingresos = Comprometidos por facturar  + Disponible venta tienda | INCOME
+*    gs_data-income = gs_data-bill_comp + gs_data-sale_store.
+    gs_data-income = gs_data-plan_history + gs_data-store_transit. "Mismo calculo que pendiente recepcion disponible para venta
+
+* Periódo ultimo pronostico (Semana Anterior)
     lv_date = sy-datum - 7.
-
     CALL FUNCTION 'DATE_GET_WEEK'
       EXPORTING
         date         = lv_date
@@ -229,7 +366,6 @@ FORM get_data.
     IF sy-subrc <> 0.
 * Implement suitable error handling here
     ENDIF.
-
     gs_data-forecast_lwp = lv_week.
 
 
@@ -309,9 +445,9 @@ FORM get_data.
       gs_data-value_awp = ls_prow-prwrt.
     ENDIF.
 
-* Periódo pronostico (proxima semana)
+* Periódo Pronostico (proxima semana)
     CLEAR: lv_date, lv_week.
-    lv_date = sy-datum.
+    lv_date = sy-datum + 7.
 
     CALL FUNCTION 'DATE_GET_WEEK'
       EXPORTING
@@ -324,7 +460,6 @@ FORM get_data.
     IF sy-subrc <> 0.
 * Implement suitable error handling here
     ENDIF.
-
     gs_data-forecast_nwp = lv_week.
 
 
@@ -351,53 +486,141 @@ FORM get_data.
     ENDIF.
 
 
-* Historial Acumulado consumo ultimas 52 semanas
-    SELECT SINGLE * FROM mver INTO @DATA(ls_mver)
-      WHERE werks EQ @ls_marc-werks
-        AND matnr EQ @ls_marc-matnr
-        AND gjahr EQ @sy-datum(4).
-    IF sy-subrc EQ 0.
+    BREAK mqa_abap1.
 
-      " Use a DO loop to sum the monthly fields (GSV01 to GSV52)
-      DO 52 TIMES.
-        " Format the field name dynamically (e.g., 'GSV01', 'GSV02')
-        lv_count = sy-index. " sy-index goes from 1 to DO times
+    REFRESH: lt_mver.
+*---------------------------------------------------------------------------------------------
+* LOGICA PARA 52 SEMANAS
+*---------------------------------------------------------------------------------------------
+    CLEAR: lv_year_act, lv_year_ant, lv_week_act, lv_campo_num, lv_field_name.
 
-        CONCATENATE 'GSV' lv_count INTO lv_fieldname.
-        CONDENSE lv_fieldname NO-GAPS.
+    " 1. Obtener año actual y año anterio
+    lv_year_act = gs_data-forecast_awp(4).
+    lv_year_ant = gs_data-forecast_awp(4) - 1.
+    lv_week_act = gs_data-forecast_awp+4(2) - 1. " No se toma la semana actual
 
-        " Assign the dynamic field to the field symbol
-        ASSIGN COMPONENT lv_fieldname OF STRUCTURE lw_mver TO <lfs_gsv>.
+    " 2. Cargar registros de MVER de los años involucrados para evitar SELECTs en bucle
+    " Traemos el año actual y el anterior para cubrir las 52 semanas
+    SELECT * FROM mver INTO TABLE lt_mver
+      WHERE werks EQ ls_marc-werks
+        AND matnr EQ ls_marc-matnr
+        AND gjahr IN ( lv_year_ant, lv_year_act )
+        AND perkz = 'W'.
 
-        " Check if assignment was successful and field is numeric (MVER-GSVxx are numeric)
-        IF sy-subrc = 0 AND <lfs_gsv> IS ASSIGNED.
-          lv_total52 = lv_total52 + <lfs_gsv>.
+    " 3. Bucle para retroceder 52 semanas
+    DO 52 TIMES.
+      " Calcular en qué registro de los 4 anuales cae la semana
+      DATA(lv_num_registro) = ( ( lv_week_act - 1 ) DIV 13 ) + 1.
 
-          IF lv_count LE '08'.
-            lv_total8 = lv_total8 + <lfs_gsv>.
-          ENDIF.
+      " Calcular el índice del campo MGV (01 a 13)
+      lv_campo_num = ( ( lv_week_act - 1 ) MOD 13 ) + 1.
+      CONCATENATE 'MGV' lv_campo_num INTO lv_field_name.
 
-          IF lv_count EQ '01'.
-            lv_total1 = <lfs_gsv>.
-          ENDIF.
-
-
+      " Buscar el registro correcto en nuestra tabla interna
+      READ TABLE lt_mver INTO ls_mver WITH KEY gjahr = lv_year_act zahlr = lv_num_registro. "BINARY SEARCH.
+      IF sy-subrc = 0.
+        ASSIGN COMPONENT lv_field_name OF STRUCTURE ls_mver TO <fs_valor>.
+        IF <fs_valor> IS ASSIGNED.
+          gs_data-accu_history_52 += <fs_valor>.
+          UNASSIGN <fs_valor>.
         ENDIF.
-      ENDDO.
-
-      IF lv_total52 IS NOT INITIAL.
-        gs_data-accu_history_52 = lv_total52 / 52.  "Validar semanas con el funcional solo llega GSV13
       ENDIF.
 
-      IF lv_total8 IS NOT INITIAL.
-        gs_data-accu_history_8 = lv_total8 / 8.
+      " Retroceder la semana para la siguiente iteración
+      lv_week_act = lv_week_act - 1.
+      IF lv_week_act = 0.
+        lv_year_act = lv_year_act - 1.
+        lv_week_act = 52. " Ajustar si el año anterior tuvo 53 semanas
+
+*        " Función para saber si el año anterior tuvo 52 o 53 semanas
+*        CALL FUNCTION 'WEEKS_GET_LAST'
+*          EXPORTING
+*            i_year = lv_year
+*          IMPORTING
+*            e_week = lv_week.
+      ENDIF.
+    ENDDO.
+
+
+*---------------------------------------------------------------------------------------------
+* LOGICA PARA 8 SEMANAS
+*---------------------------------------------------------------------------------------------
+    CLEAR: lv_year_act, lv_year_ant, lv_week_act, lv_campo_num, lv_field_name.
+    lv_year_act = gs_data-forecast_awp(4).
+    lv_year_ant = gs_data-forecast_awp(4) - 1.
+    lv_week_act = gs_data-forecast_awp+4(2) - 1. " No se toma la semana actual
+
+    "Bucle para retroceder 8 Semanas
+    DO 8 TIMES.
+      " Calcular en qué registro de los 4 anuales cae la semana
+      lv_num_registro = ( ( lv_week_act - 1 ) DIV 13 ) + 1.
+
+      " Calcular el índice del campo MGV (01 a 13)
+      lv_campo_num = ( ( lv_week_act - 1 ) MOD 13 ) + 1.
+      CONCATENATE 'MGV' lv_campo_num INTO lv_field_name.
+
+      " Buscar el registro correcto en nuestra tabla interna
+      READ TABLE lt_mver INTO ls_mver WITH KEY gjahr = lv_year_act zahlr = lv_num_registro. "BINARY SEARCH.
+      IF sy-subrc = 0.
+        ASSIGN COMPONENT lv_field_name OF STRUCTURE ls_mver TO <fs_valor>.
+        IF <fs_valor> IS ASSIGNED.
+          gs_data-accu_history_8 += <fs_valor>.
+          UNASSIGN <fs_valor>.
+        ENDIF.
       ENDIF.
 
-      IF lv_total1 IS NOT INITIAL.
-        gs_data-forecast_daily = lv_total1 / 7.
+      " Retroceder la semana para la siguiente iteración
+      lv_week_act = lv_week_act - 1.
+      IF lv_week_act = 0.
+        lv_year_act = lv_year_act - 1.
+        lv_week_act = 8.
+
+*        " Función para saber si el año anterior tuvo 52 o 53 semanas
+*        CALL FUNCTION 'WEEKS_GET_LAST'
+*          EXPORTING
+*            i_year = lv_year
+*          IMPORTING
+*            e_week = lv_week.
       ENDIF.
+    ENDDO.
+
+*---------------------------------------------------------------------------------------------
+* LOGICA PARA SEMANA ACTUAL
+*---------------------------------------------------------------------------------------------
+    CLEAR: lv_year_act, lv_year_ant, lv_week_act, lv_campo_num, lv_field_name.
+    lv_year_act = gs_data-forecast_awp(4).
+    lv_year_ant = gs_data-forecast_awp(4) - 1.
+    lv_week_act = gs_data-forecast_awp+4(2).
+
+    "Semana actual
+    DO 1 TIMES.
+      " Calcular en qué registro de los 4 anuales cae la semana
+      lv_num_registro = ( ( lv_week_act - 1 ) DIV 13 ) + 1.
+
+      " Calcular el índice del campo MGV (01 a 13)
+      lv_campo_num = ( ( lv_week_act - 1 ) MOD 13 ) + 1.
+      CONCATENATE 'MGV' lv_campo_num INTO lv_field_name.
+
+      " Buscar el registro correcto en nuestra tabla interna
+      READ TABLE lt_mver INTO ls_mver WITH KEY gjahr = lv_year_act zahlr = lv_num_registro. "BINARY SEARCH.
+      IF sy-subrc = 0.
+        ASSIGN COMPONENT lv_field_name OF STRUCTURE ls_mver TO <fs_valor>.
+        IF <fs_valor> IS ASSIGNED.
+          gs_data-consump_aw += <fs_valor>.
+          UNASSIGN <fs_valor>.
+        ENDIF.
+      ENDIF.
+    ENDDO.
+
+*   Pronostico por dia | FORESCAT_DAILY
+    IF gs_data-value_awp IS NOT INITIAL.
+*      gs_data-forecast_daily = gs_data-value_awp / 7.
+      gs_data-forecast_daily = round( val  = gs_data-value_awp / 7
+                                      dec  = 0
+                                      mode = cl_abap_math=>round_half_up ).
 
     ENDIF.
+
 
 
     SELECT SINGLE * FROM wrpl INTO @DATA(ls_wrpl)
@@ -415,28 +638,138 @@ FORM get_data.
     ENDIF.
 
     gs_data-stock_security = ls_marc-eisbe. "Stock de seguridad
-    gs_data-delivery_frequency_id = ls_marc-mrppp. "ID Frecuencia Entrega.
-    gs_data-planning_cycle_id = ls_marc-lfrhy. "ID Ciclo de planificación
 
 
-*  Necesidad Reaprov.
+
+
+
+
+
+
+*   ID Frecuencia Entrega | DELIVERY_FREQUENCY_ID
+    gs_data-delivery_frequency_id = ls_marc-mrppp. "
+
+
+*   Descripcion de ID de Entrega |DESCRIPTION_DELIVERY_ID
+    SELECT SINGLE * FROM t439h INTO @DATA(ls_t439h)
+      WHERE spras EQ 'S'
+        AND werks EQ @gs_data-werks
+        AND mrppp EQ @ls_marc-mrppp.
+    IF sy-subrc EQ 0.
+      gs_data-description_delivery_id = ls_t439h-pptxt.
+    ENDIF.
+
+
+*  ID Ciclo de planificación |  PLANNING_CYCLE_ID
+    gs_data-planning_cycle_id = ls_marc-lfrhy.
+
+
+* Descripcion de ID Ciclo | DESCRIPTION_CYCLE_ID
+    SELECT SINGLE * FROM t439h INTO ls_t439h
+      WHERE spras EQ 'S'
+        AND werks EQ gs_data-werks
+        AND mrppp EQ ls_marc-lfrhy.
+    IF sy-subrc EQ 0.
+      gs_data-description_cycle_id = ls_t439h-pptxt.
+    ENDIF.
+
+
+*------------------------------------------------------------------------------
+*--- Paso 1: Pronóstico_X_dia
+*------------------------------------------------------------------------------
+*  Si el resultado de Pronostico X Dia da un valor con decimales.
+*  -Si el decimal es menor a 0.5, se redondea al entero inferior
+*  -Si el decimal es mayor a 0.5, se redondea al entero superior
+
+*   gs_data-forecast_daily
+
+*------------------------------------------------------------------------------
+*--- Paso 1: Determinar Stock Objetivo calculado
+*------------------------------------------------------------------------------
+*   Stock objetivo Calculado
+    gs_data-stock_obj_cal = gs_data-forecast_daily * gs_data-target_coverage_days.
+
+
+*   Si, el stock objetivo calculado es Mayor que el Stock Objetivo Maximo se descarta el resultado
+*   y se toma para el paso 3, el valor del Stock Objetivo Maximo asignado al articulo en la tienda.
+    IF gs_data-stock_obj_cal GT gs_data-target_stock_max.
+
+      gs_data-stock_disponible = gs_data-target_stock_max.
+
+*   Si, el stock objetivo calculado es Menor que el Stock Objetivo Minimo se descarta el resultado
+*   y se toma para el paso 3, el valor del Stock Objetivo Minimo asignado al articulo en la tienda.
+    ELSEIF gs_data-stock_obj_cal LT gs_data-target_stock_min.
+
+      gs_data-stock_disponible = gs_data-target_stock_min.
+
+*   Si, el stock objetivo calculado es Menor que el Stock Objetivo Maximo y Mayor Stock Objetivo Minimo
+*   asignado al articulo en la tienda, se toma el resultado del Stock Objetivo Calculado para el paso 3.
+    ELSEIF gs_data-stock_obj_cal GT gs_data-target_stock_max AND gs_data-stock_obj_cal LT gs_data-target_stock_min.
+
+      gs_data-stock_disponible = gs_data-stock_obj_cal.
+
+    ENDIF.
+
+*------------------------------------------------------------------------------
+*--- Paso 2: Unidades en tienda + todas las unidades en Curso
+*------------------------------------------------------------------------------
+* Inventario disponible.Pendiente por recibir
+    gs_data-inventario_disp_pendiente_rec = ( ( gs_data-pending_sale_store + gs_data-stock_store + gs_data-libre_util_store ) - gs_data-stock_security ).
+
+*   Si el resultado es menor es decir un negativo se debe transportar en un positvo.
+    gs_data-inventario_disp_pendiente_rec = abs( gs_data-inventario_disp_pendiente_rec ).
+
+*------------------------------------------------------------------------------
+*--- Paso 3: Necesidad de Reaprovisionamiento
+*------------------------------------------------------------------------------
+*   Necesidad Reaprov.
     CASE ls_marc-dismm.
       WHEN 'RP'.
-        gs_data-need_reapproval = gs_data-sale_store - gs_data-target_stock.
+*        gs_data-need_reapproval = gs_data-sale_store - gs_data-target_stock.
+        gs_data-need_reapproval = ( ( gs_data-target_stock ) - ( gs_data-libre_util_store + gs_data-pending_sale_store + gs_data-stock_store ) ).
       WHEN 'RF'.
-        gs_data-need_reapproval = gs_data-forecast_daily * gs_data-target_coverage_days.
+*        gs_data-need_reapproval = gs_data-forecast_daily * gs_data-target_coverage_days.
+*        gs_data-need_reapproval = gs_data-target_stock - gs_data-inventario_disp_pendiente_rec.
+        gs_data-need_reapproval = gs_data-stock_disponible - gs_data-inventario_disp_pendiente_rec.
+
+*   Necesidad Reaprov. Si es menor a cero entonces cero.
+      IF gs_data-need_reapproval LT 0.
+        gs_data-need_reapproval = 0.
+      ENDIF.
     ENDCASE.
-
-
-*  reception_id = Denominación FE
-*  description = Denominación CP
-
-
-
 
 
     APPEND gs_data TO gt_data.
     CLEAR: gs_data.
+
+
+
+*****   Si, el inventario disponible y pendiente por recibir es igual Stock de Seguridad,
+*****   dando un valor cero, este debe tomar el resultado del Stock Objetivo Calculado del paso 2 con las reglas aplicadas.
+****    IF gs_data-inventario_disp_pendiente_rec EQ gs_data-stock_security.
+**** gs_data-inventario_disp_pendiente_rec = abs( gs_data-inventario_disp_pendiente_rec ).
+****     gs_data-inventario_disp_pendiente_rec = 0.
+****
+*****   Si, el inventario disponible y pendiente por recibir es menor Stock de Seguridad,
+*****   dando un valor negativo, este debe sumarse al stock Objetivo Calculado del paso 2 con las reglas aplicadas
+****    ELSEIF gs_data-inventario_disp_pendiente_rec LT gs_data-stock_security.
+****      gs_data-stock_obj_cal = gs_data-stock_obj_cal + gs_data-inventario_disp_pendiente_rec.
+****
+*****   Si, el inventario disponible y pendiente por recibir es Mayor al Stock de Seguridad,
+*****   debe aplicarse las reglas del paso 4.
+****    ELSEIF gs_data-inventario_disp_pendiente_rec GT gs_data-stock_security.
+****
+*****   Si, el inventario disponible y pendiente por recibir es Mayor al Stock de Seguridad.
+*****   Si. El valor es menor que cero entonces se presenta el valor cero en el reporte
+*****   Necesidad Reaprov.
+****      gs_data-need_reapproval = 0.
+****
+*****   Necesidad Reaprov. Si es menor a cero entonces cero.
+****      IF gs_data-need_reapproval LT 0.
+****        gs_data-need_reapproval = 0.
+****      ENDIF.
+****    ENDIF.
+
 
   ENDLOOP.
 
